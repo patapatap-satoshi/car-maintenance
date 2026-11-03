@@ -31,6 +31,7 @@
     <!-- 交換時期ダッシュボード -->
     <section id="view-dashboard" class="view active">
       <div id="summary" class="summary"></div>
+      <div id="measure-panel"></div>
       <div id="status-list" class="cards"></div>
       <details id="unrecorded-wrap" class="unrecorded">
         <summary>まだ記録がない項目 <span id="unrecorded-count"></span></summary>
@@ -63,7 +64,7 @@
 
         <div id="preview" class="preview" hidden></div>
 
-        <fieldset>
+        <fieldset id="part-fieldset">
           <legend>部品情報</legend>
           <label>
             型番・品番
@@ -76,6 +77,19 @@
             <datalist id="brand-list"></datalist>
           </label>
         </fieldset>
+
+        <details id="measure-box" class="measure-box">
+          <summary>ブレーキパッド・タイヤの残量 <span class="muted small">（測った場合のみ・mm）</span></summary>
+          <div class="measure-grid">
+            <span class="measure-label">ブレーキパッド</span>
+            <label>F パッド<input type="number" name="padF" inputmode="decimal" min="0" max="30" step="0.1" placeholder="mm" /></label>
+            <label>R パッド<input type="number" name="padR" inputmode="decimal" min="0" max="30" step="0.1" placeholder="mm" /></label>
+            <span class="measure-label">タイヤ残り溝</span>
+            <label>F タイヤ<input type="number" name="treadF" inputmode="decimal" min="0" max="30" step="0.1" placeholder="mm" /></label>
+            <label>R タイヤ<input type="number" name="treadR" inputmode="decimal" min="0" max="30" step="0.1" placeholder="mm" /></label>
+          </div>
+          <p class="muted small">目安：パッドは 5mm 以下でそろそろ・3mm 以下で交換、タイヤ溝は 4mm 以下でそろそろ・1.6mm（スリップサイン）以下は使用不可。</p>
+        </details>
 
         <fieldset>
           <legend>その他</legend>

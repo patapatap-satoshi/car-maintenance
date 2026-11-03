@@ -223,6 +223,28 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
 .cost-total b { font-size: 17px; }
 #legacy-cost-note { margin: -6px 0 12px; }
 
+/* 残量測定 */
+.measure-box { border-top: 1px solid var(--border); padding: 12px 0 4px; margin: 4px 0 8px; }
+.measure-box summary { cursor: pointer; font-weight: 600; font-size: 13.5px; }
+.measure-grid { display: grid; grid-template-columns: auto 1fr 1fr; gap: 0 10px; align-items: end; margin-top: 10px; }
+.measure-grid .measure-label { font-size: 13px; padding-bottom: 22px; white-space: nowrap; }
+.measure-box p { margin: 0 0 8px; }
+
+.measure-card h3 { margin-bottom: 8px; }
+.measure-table { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.measure-cell { border: 1px solid var(--border); border-left-width: 4px; border-radius: 8px; padding: 6px 10px; }
+.measure-cell.ok { border-left-color: var(--ok); }
+.measure-cell.soon { border-left-color: var(--soon); background: var(--soon-bg); }
+.measure-cell.overdue { border-left-color: var(--bad); background: var(--bad-bg); }
+.measure-cell.none { border-left-color: var(--border); }
+.measure-cell .v { font-size: 20px; font-weight: 700; }
+.measure-cell .v small { font-size: 12px; font-weight: 400; margin-left: 2px; }
+.measure-cell .d { font-size: 11.5px; color: var(--muted); }
+.measure-cell.soon .lv { color: var(--soon); }
+.measure-cell.overdue .lv { color: var(--bad); }
+.lv { font-size: 11.5px; font-weight: 600; margin-left: 4px; }
+.measure-tags { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 13px; margin-top: 4px; }
+
 .form-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .form-actions .btn { min-width: 120px; }
 

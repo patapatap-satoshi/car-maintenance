@@ -67,3 +67,28 @@ test('totalCost: 部品代 + 工賃', () => {
   assert.equal(C.totalCost({ cost: 5000 }), 5000);
   assert.equal(C.totalCost({ cost: null }), null);
 });
+
+test('measureLevel: ブレーキパッドとタイヤ溝の判定', () => {
+  assert.equal(C.measureLevel('padF', 8), 'ok');
+  assert.equal(C.measureLevel('padF', 5), 'soon');
+  assert.equal(C.measureLevel('padR', 3), 'overdue');
+  assert.equal(C.measureLevel('treadF', 6.5), 'ok');
+  assert.equal(C.measureLevel('treadR', 4), 'soon');
+  assert.equal(C.measureLevel('treadR', 1.6), 'overdue');
+  assert.equal(C.measureLevel('treadR', null), null);
+});
+
+test('latestMeasurements: 項目ごとに最新値と前回値', () => {
+  const recs = [
+    { date: '2025-01-10', km: 40000, padF: 9, treadF: 7 },
+    { date: '2026-01-10', km: 50000, padF: 7.5, padR: 8 },
+    { date: '2025-06-10', km: 45000, treadF: 6, treadR: 6.5 },
+    { date: '2026-03-01', km: 52000 },
+  ];
+  const m = C.latestMeasurements(recs);
+  assert.deepEqual(m.padF, { value: 7.5, date: '2026-01-10', km: 50000, prev: { value: 9, date: '2025-01-10', km: 40000 } });
+  assert.equal(m.padR.prev, null);
+  assert.equal(m.treadF.value, 6);
+  assert.equal(m.treadF.prev.value, 7);
+  assert.equal(m.treadR.value, 6.5);
+});
