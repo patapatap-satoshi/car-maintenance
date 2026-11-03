@@ -245,6 +245,15 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
 .lv { font-size: 11.5px; font-weight: 600; margin-left: 4px; }
 .measure-tags { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 13px; margin-top: 4px; }
 
+/* 夏・冬タイヤ */
+.mounted-line { font-size: 14px; margin-bottom: 10px; }
+.tire-set { border-top: 1px solid var(--border); padding: 10px 0 4px; }
+.tire-set:first-of-type { border-top: 0; }
+.ts-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-bottom: 8px; font-size: 14px; }
+.ts-km { margin-left: auto; font-size: 13px; }
+.badge.stored { background: var(--bg); color: var(--muted); border: 1px solid var(--border); }
+.measure-grid .measure-label small { font-size: 11.5px; }
+
 .form-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .form-actions .btn { min-width: 120px; }
 

@@ -108,8 +108,10 @@
    * @param {object} item  {intervalKm, intervalMonths}（どちらか null 可）
    * @param {object|null} last  前回交換記録 {date, km}
    * @param {object} ctx  {today, currentKm, kmPerDay}
+   * @param {object} [opts]  タイヤセット用 {usedKm: 装着中に走った距離, mounted: 現在装着中か}
+   *   usedKm を渡すと、オドメーターの差ではなく使用距離で距離の判定をする。
    */
-  function computeStatus(item, last, ctx) {
+  function computeStatus(item, last, ctx, opts = {}) {
     const { today, currentKm, kmPerDay } = ctx;
     const intervalKm = Number(item.intervalKm) > 0 ? Number(item.intervalKm) : null;
     const intervalMonths = Number(item.intervalMonths) > 0 ? Number(item.intervalMonths) : null;
@@ -127,7 +129,20 @@
       res.dueDateByTime = addMonths(last.date, intervalMonths);
     }
     // 距離による推奨距離・到達予想日
-    if (intervalKm && Number.isFinite(last.km)) {
+    if (Number.isFinite(opts.usedKm)) {
+      // タイヤセット：装着していた間の走行距離で判定する
+      res.usedKmMode = true;
+      res.mounted = !!opts.mounted;
+      res.elapsedKm = opts.usedKm;
+      if (intervalKm) {
+        res.remainingKm = intervalKm - opts.usedKm;
+        // 装着中のときだけ、オドメーター上の到達距離と到達日を予測できる
+        if (res.mounted && Number.isFinite(currentKm)) {
+          res.dueKm = currentKm + res.remainingKm;
+          if (kmPerDay && kmPerDay > 0) res.dueDateByKm = addDays(today, res.remainingKm / kmPerDay);
+        }
+      }
+    } else if (intervalKm && Number.isFinite(last.km)) {
       res.dueKm = last.km + intervalKm;
       if (Number.isFinite(currentKm)) res.remainingKm = res.dueKm - currentKm;
       if (kmPerDay && kmPerDay > 0 && res.remainingKm !== undefined) {
@@ -171,15 +186,22 @@
   }
 
   /**
-   * 記録の費用合計（部品代 + 工賃）。
+   * 記録の費用合計（部品代 + 工賃 + タイヤ脱着料・エアーバルブ交換料・タイヤ処分料）。
    * 内訳がない古い記録は、以前の「費用」(cost) をそのまま合計として扱う。
    * 何も入力されていなければ null。
    */
+  const COST_FIELDS = [
+    { key: 'partsCost', label: '部品代' },
+    { key: 'laborCost', label: '工賃' },
+    { key: 'mountFee', label: 'タイヤ脱着料' },
+    { key: 'valveFee', label: 'エアーバルブ交換料' },
+    { key: 'disposalFee', label: 'タイヤ処分料' },
+  ];
+
   function totalCost(rec) {
     if (!rec) return null;
-    const parts = Number.isFinite(rec.partsCost) ? rec.partsCost : null;
-    const labor = Number.isFinite(rec.laborCost) ? rec.laborCost : null;
-    if (parts !== null || labor !== null) return (parts || 0) + (labor || 0);
+    const vals = COST_FIELDS.map((f) => rec[f.key]).filter((v) => Number.isFinite(v));
+    if (vals.length) return vals.reduce((a, b) => a + b, 0);
     return Number.isFinite(rec.cost) ? rec.cost : null;
   }
 
@@ -195,14 +217,80 @@
     { key: 'treadF', group: 'tread', label: 'タイヤ残り溝 F', short: 'Fタイヤ', red: 1.6, yellow: 4 },
     { key: 'treadR', group: 'tread', label: 'タイヤ残り溝 R', short: 'Rタイヤ', red: 1.6, yellow: 4 },
   ];
+  // 冬タイヤ（スタッドレス）は溝が新品時の約半分（プラットフォーム露出）で冬用として使用限度
+  const WINTER_TREAD = { red: 4, yellow: 5.5 };
 
-  /** 測定値の状態: 'overdue'（交換が必要）/ 'soon'（そろそろ）/ 'ok' */
-  function measureLevel(key, value) {
+  /** 測定値の状態: 'overdue'（交換が必要）/ 'soon'（そろそろ）/ 'ok'。tireSet は 'summer' | 'winter' */
+  function measureLevel(key, value, tireSet) {
     const m = MEASURES.find((x) => x.key === key);
     if (!m || !Number.isFinite(value)) return null;
-    if (value <= m.red) return 'overdue';
-    if (value <= m.yellow) return 'soon';
+    const th = m.group === 'tread' && tireSet === 'winter' ? WINTER_TREAD : m;
+    if (value <= th.red) return 'overdue';
+    if (value <= th.yellow) return 'soon';
     return 'ok';
+  }
+
+  // ---------- 夏タイヤ・冬タイヤ ----------
+  const TIRE_SETS = { summer: '夏タイヤ', winter: '冬タイヤ' };
+
+  const byDateKm = (a, b) => (a.date !== b.date ? (a.date < b.date ? -1 : 1) : (a.km || 0) - (b.km || 0));
+
+  /**
+   * 記録からタイヤの装着イベントを取り出す。
+   * 項目の tireSet（'summer' | 'winter'）が付いた記録が対象で、
+   * kind が 'swap' なら履き替え、それ以外（購入・交換）なら新しいセットに交換したものとする。
+   * いずれも、その時点からそのセットを装着したとみなす。
+   * @returns {Array<{id, date, km, set, type: 'purchase'|'swap'}>}
+   */
+  function tireEvents(records, items) {
+    const map = new Map(items.map((i) => [i.id, i]));
+    return records
+      .filter((r) => {
+        const it = map.get(r.itemId);
+        return it && it.tireSet && Number.isFinite(r.km);
+      })
+      .map((r) => {
+        const it = map.get(r.itemId);
+        return { id: r.id, date: r.date, km: r.km, set: it.tireSet, type: it.kind === 'swap' ? 'swap' : 'purchase' };
+      })
+      .sort(byDateKm);
+  }
+
+  /** 指定時点（日付・距離）で装着していたタイヤセット。記録がなければ null */
+  function tireSetAt(events, date, km) {
+    let set = null;
+    for (const e of events) {
+      if (e.date < date || (e.date === date && (e.km || 0) <= (km || 0))) set = e.set;
+      else break;
+    }
+    return set;
+  }
+
+  /**
+   * 夏・冬それぞれの使用距離（最後に購入・交換してから、装着していた間に走った距離の合計）。
+   * @param {Array} events  tireEvents() の結果
+   * @param {number|null} endKm  現在の走行距離（装着中のセットの距離をここまで数える）
+   */
+  function tireUsage(events, endKm) {
+    const sets = {
+      summer: { km: 0, since: null, tracked: false },
+      winter: { km: 0, since: null, tracked: false },
+    };
+    let mounted = null;
+    let mountedSince = null;
+    for (const e of events) {
+      if (mounted) sets[mounted].km += Math.max(0, e.km - mountedSince.km);
+      const s = sets[e.set];
+      if (e.type === 'purchase') {
+        s.km = 0;
+        s.since = { date: e.date, km: e.km };
+      }
+      s.tracked = true;
+      mounted = e.set;
+      mountedSince = { date: e.date, km: e.km };
+    }
+    if (mounted && Number.isFinite(endKm)) sets[mounted].km += Math.max(0, endKm - mountedSince.km);
+    return { mounted, mountedSince, sets };
   }
 
   /**
@@ -224,6 +312,11 @@
   }
 
   return {
+    COST_FIELDS,
+    TIRE_SETS,
+    tireEvents,
+    tireSetAt,
+    tireUsage,
     MEASURES,
     measureLevel,
     latestMeasurements,

@@ -6,7 +6,8 @@
  *   items:    [{id, name, category, intervalKm, intervalMonths, builtin}],
  *   vehicles: [{id, name, odometerLog: [{date, km}]}],
  *   records:  [{id, vehicleId, itemId, date, km, partNumber, brand,
- *              partsCost, laborCost, cost(= 部品代 + 工賃),
+ *              partsCost, laborCost, mountFee, valveFee, disposalFee,
+ *              cost(= 上記の合計),
  *              padF, padR, treadF, treadR（残量 mm）, shop, memo}],
  *   activeVehicleId
  * }
@@ -21,7 +22,11 @@
     { id: 'atf', name: 'ミッションオイル / ATF・CVTF', category: 'オイル', intervalKm: 40000, intervalMonths: 48 },
     { id: 'brake-fluid', name: 'ブレーキフルード', category: 'オイル', intervalKm: null, intervalMonths: 24 },
     { id: 'coolant', name: 'クーラント（冷却水）', category: 'オイル', intervalKm: null, intervalMonths: 24 },
-    { id: 'tires', name: 'タイヤ', category: 'タイヤ', intervalKm: 40000, intervalMonths: 48 },
+    // tireSet: どのタイヤセットの記録か。購入・交換も履き替えも、その時点からそのセットを装着したとみなす
+    { id: 'tires', name: '夏タイヤ（購入・交換）', category: 'タイヤ', intervalKm: 40000, intervalMonths: 48, tireSet: 'summer' },
+    { id: 'winter-tires', name: '冬タイヤ（購入・交換）', category: 'タイヤ', intervalKm: null, intervalMonths: 48, tireSet: 'winter' },
+    { id: 'tire-swap-winter', name: '夏→冬タイヤ履き替え', category: 'タイヤ', intervalKm: null, intervalMonths: null, tireSet: 'winter', kind: 'swap' },
+    { id: 'tire-swap-summer', name: '冬→夏タイヤ履き替え', category: 'タイヤ', intervalKm: null, intervalMonths: null, tireSet: 'summer', kind: 'swap' },
     { id: 'tire-rotation', name: 'タイヤローテーション', category: 'タイヤ', intervalKm: 5000, intervalMonths: null },
     { id: 'battery', name: 'バッテリー', category: 'バッテリー', intervalKm: null, intervalMonths: 36 },
     { id: 'air-filter', name: 'エアフィルター（エアクリーナー）', category: 'フィルター', intervalKm: 30000, intervalMonths: 24 },
@@ -35,7 +40,7 @@
     { id: 'muffler-coat', name: 'マフラー防錆塗装', category: '下廻り・防錆', intervalKm: null, intervalMonths: 24 },
     { id: 'flare', name: '発煙筒', category: 'その他', intervalKm: null, intervalMonths: 48 },
     // 交換はせず、ブレーキパッド残量・タイヤ残り溝だけを記録するための項目（交換時期の計算対象外）
-    { id: 'measurement', name: '残量測定のみ（交換なし）', category: '点検', intervalKm: null, intervalMonths: null, measureOnly: true },
+    { id: 'measurement', name: '残量測定のみ（交換なし）', category: '点検', intervalKm: null, intervalMonths: null, kind: 'measure' },
   ].map((i) => ({ ...i, builtin: true }));
 
   const CATEGORIES = ['点検', 'オイル', 'タイヤ', 'バッテリー', 'フィルター', '下廻り・防錆', 'その他'];
@@ -59,9 +64,14 @@
     if (!data || typeof data !== 'object') return emptyData();
     const d = { ...emptyData(), ...data };
     if (!Array.isArray(d.items) || !d.items.length) d.items = DEFAULT_ITEMS.map((i) => ({ ...i }));
-    // アプリの更新で増えた標準項目を、既存データにも追加する
+    // アプリの更新で増えた標準項目を、既存データにも追加する。
+    // 既存の標準項目は、名前・分類・種類を最新に揃える（交換間隔はユーザーの設定を残す）
     DEFAULT_ITEMS.forEach((def) => {
-      if (!d.items.some((i) => i.id === def.id)) d.items.push({ ...def });
+      const cur = d.items.find((i) => i.id === def.id);
+      if (!cur) return d.items.push({ ...def });
+      const { intervalKm, intervalMonths } = cur;
+      Object.keys(cur).forEach((k) => delete cur[k]);
+      Object.assign(cur, def, { intervalKm, intervalMonths });
     });
     if (!Array.isArray(d.vehicles) || !d.vehicles.length) d.vehicles = emptyData().vehicles;
     d.vehicles.forEach((v) => {

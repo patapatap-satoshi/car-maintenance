@@ -3,6 +3,7 @@
   'use strict';
 
   const { todayStr, formatElapsed, diffDays, avgKmPerDay, latestOdometer, computeStatus, totalCost, MEASURES, measureLevel, latestMeasurements } = Calc;
+  const { TIRE_SETS, tireEvents, tireSetAt, tireUsage, COST_FIELDS } = Calc;
   let data = Store.load();
 
   const $ = (sel, el = document) => el.querySelector(sel);
@@ -63,6 +64,23 @@
     return sortRecordsDesc(vehicleRecords().filter((r) => r.itemId === itemId && r.id !== excludeId))[0] || null;
   }
 
+  // ---------- 夏タイヤ・冬タイヤ ----------
+  const tireEventsOf = (records = vehicleRecords()) => tireEvents(records, data.items);
+
+  /** 指定時点（日付・距離）までのタイヤイベント。編集中の記録は除く */
+  function tireEventsBefore(date, km, excludeId) {
+    return tireEventsOf(vehicleRecords().filter((r) => r.id !== excludeId)).filter(
+      (e) => e.date < date || (e.date === date && Number.isFinite(km) && e.km <= km)
+    );
+  }
+
+  /** 記録の残り溝がどちらのタイヤのものか（タイヤの記録がまだなければ夏タイヤ扱い） */
+  function tireSetOfRecord(r, events) {
+    const it = itemById(r.itemId);
+    if (it && it.tireSet) return it.tireSet;
+    return tireSetAt(events, r.date, r.km) || 'summer';
+  }
+
   // ---------- 表示切替 ----------
   function showView(name) {
     $$('.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
@@ -118,11 +136,14 @@
   function renderDashboard(ctx) {
     const rows = [];
     const unrecorded = [];
+    const tire = tireUsage(tireEventsOf(), ctx.currentKm);
     data.items.forEach((item) => {
-      if (item.measureOnly) return;
+      if (item.kind) return; // 残量測定・履き替えは交換時期の計算対象外
       const last = lastRecordOf(item.id);
       if (!last) return unrecorded.push(item);
-      rows.push({ item, last, st: computeStatus(item, last, ctx) });
+      // 夏・冬タイヤは、装着していた間の走行距離で判定する
+      const opts = item.tireSet ? { usedKm: tire.sets[item.tireSet].km, mounted: tire.mounted === item.tireSet } : {};
+      rows.push({ item, last, st: computeStatus(item, last, ctx, opts) });
     });
     rows.sort(
       (a, b) =>
@@ -141,7 +162,7 @@
            <button type="button" class="btn primary" data-action="new-record">最初の記録を追加</button>
          </div>`;
 
-    renderMeasurePanel();
+    renderMeasurePanel(tire);
     $('#status-list').innerHTML = rows.map(({ item, last, st }) => statusCard(item, last, st)).join('');
 
     $('#unrecorded-wrap').hidden = !unrecorded.length;
@@ -158,29 +179,63 @@
   const LEVEL_LABEL = { overdue: '交換', soon: 'そろそろ', ok: '' };
   const mm = (v) => (Number.isFinite(v) ? (Math.round(v * 10) / 10).toFixed(1) : '—');
 
-  /** ブレーキパッド残量・タイヤ残り溝の最新値 */
-  function renderMeasurePanel() {
-    const latest = latestMeasurements(vehicleRecords());
-    const has = Object.keys(latest).length > 0;
-    const cell = (m) => {
-      const x = latest[m.key];
-      if (!x) return `<div class="measure-cell none"><div class="small muted">${m.short}</div><div class="v">—</div><div class="d">未測定</div></div>`;
-      const lv = measureLevel(m.key, x.value);
-      const diff = x.prev ? Math.round((x.value - x.prev.value) * 10) / 10 : null;
-      return `<div class="measure-cell ${lv}">
-          <div class="small muted">${m.short}${LEVEL_LABEL[lv] ? `<span class="lv">${LEVEL_LABEL[lv]}</span>` : ''}</div>
-          <div class="v">${mm(x.value)}<small>mm</small></div>
-          <div class="d">${fmtDate(x.date)}・${num(x.km)}km${
-            diff !== null ? `<br>前回 ${mm(x.prev.value)}mm から ${diff > 0 ? '+' : ''}${mm(diff)}mm` : ''
-          }</div>
+  function measureCell(m, x, set, label) {
+    if (!x) return `<div class="measure-cell none"><div class="small muted">${label}</div><div class="v">—</div><div class="d">未測定</div></div>`;
+    const lv = measureLevel(m.key, x.value, set);
+    const diff = x.prev ? Math.round((x.value - x.prev.value) * 10) / 10 : null;
+    return `<div class="measure-cell ${lv}">
+        <div class="small muted">${label}${LEVEL_LABEL[lv] ? `<span class="lv">${LEVEL_LABEL[lv]}</span>` : ''}</div>
+        <div class="v">${mm(x.value)}<small>mm</small></div>
+        <div class="d">${fmtDate(x.date)}・${num(x.km)}km${
+          diff !== null ? `<br>前回 ${mm(x.prev.value)}mm から ${diff > 0 ? '+' : ''}${mm(diff)}mm` : ''
+        }</div>
+      </div>`;
+  }
+
+  /** 夏・冬タイヤの装着状況と使用距離、残り溝、ブレーキパッド残量 */
+  function renderMeasurePanel(tire) {
+    const records = vehicleRecords();
+    const events = tireEventsOf(records);
+    const pads = MEASURES.filter((m) => m.group === 'pad');
+    const treads = MEASURES.filter((m) => m.group === 'tread');
+    const padLatest = latestMeasurements(records);
+
+    const setBlock = (set) => {
+      const u = tire.sets[set];
+      const latest = latestMeasurements(records.filter((r) => tireSetOfRecord(r, events) === set));
+      const kmText = u.tracked
+        ? `使用 <b>${num(u.km)}km</b><small class="muted">${u.since ? `（${fmtDate(u.since.date)} 購入から）` : '（履き替えの記録から）'}</small>`
+        : '<small class="muted">購入・履き替えの記録なし</small>';
+      return `
+        <div class="tire-set${tire.mounted === set ? ' mounted' : ''}">
+          <div class="ts-head">
+            <b>${TIRE_SETS[set]}</b>
+            ${tire.mounted === set ? '<span class="badge ok">装着中</span>' : u.tracked ? '<span class="badge stored">保管中</span>' : ''}
+            <span class="ts-km">${kmText}</span>
+          </div>
+          <div class="measure-table">${treads.map((m) => measureCell(m, latest[m.key], set, m.key === 'treadF' ? 'F 残り溝' : 'R 残り溝')).join('')}</div>
         </div>`;
     };
+
+    const swapTo = tire.mounted === 'winter' ? 'summer' : 'winter';
+    const swapItem = swapTo === 'winter' ? 'tire-swap-winter' : 'tire-swap-summer';
+    const mountedLine = tire.mounted
+      ? `<div class="mounted-line">装着中：<b>${TIRE_SETS[tire.mounted]}</b> <small class="muted">${fmtDate(tire.mountedSince.date)}・${num(tire.mountedSince.km)}km から</small></div>`
+      : '<p class="muted small">タイヤの購入・履き替えを記録すると、夏タイヤ・冬タイヤそれぞれの使用距離を管理できます。</p>';
+
     $('#measure-panel').innerHTML = `
       <article class="card measure-card">
-        <h3>ブレーキパッド・タイヤ残量</h3>
-        ${has ? `<div class="measure-table">${MEASURES.map(cell).join('')}</div>` : '<p class="muted small">まだ測定記録がありません。点検のときに測った値を記録できます。</p>'}
+        <h3>タイヤ・ブレーキパッド</h3>
+        ${mountedLine}
+        ${setBlock('summer')}
+        ${setBlock('winter')}
+        <div class="tire-set">
+          <div class="ts-head"><b>ブレーキパッド</b></div>
+          <div class="measure-table">${pads.map((m) => measureCell(m, padLatest[m.key], null, m.key === 'padF' ? 'F パッド' : 'R パッド')).join('')}</div>
+        </div>
         <div class="card-actions">
           <button type="button" class="btn small secondary" data-action="new-record" data-item="measurement">残量を記録</button>
+          <button type="button" class="btn small primary" data-action="new-record" data-item="${swapItem}">${TIRE_SETS[swapTo]}に履き替え</button>
         </div>
       </article>`;
   }
@@ -189,7 +244,11 @@
     const pct = st.progress !== null ? Math.min(100, Math.round(st.progress * 100)) : null;
     const due = [];
     if (st.dueDateByTime) due.push(`<li><span>期間で</span> ${fmtDate(st.dueDateByTime)}</li>`);
-    if (st.dueKm !== undefined) {
+    if (st.usedKmMode && st.intervalKm) {
+      const rem = st.remainingKm >= 0 ? `あと ${num(st.remainingKm)}km` : `<span class="bad">${num(-st.remainingKm)}km 超過</span>`;
+      const est = st.dueDateByKm ? `（${fmtDate(st.dueDateByKm)}頃）` : st.mounted ? '' : '（保管中）';
+      due.push(`<li><span>距離で</span> 使用 ${num(st.intervalKm)}km <small>${rem} ${est}</small></li>`);
+    } else if (st.dueKm !== undefined) {
       const est = st.dueDateByKm ? `<small>（${fmtDate(st.dueDateByKm)}頃）</small>` : '';
       const rem =
         st.remainingKm !== undefined
@@ -216,12 +275,16 @@
           <dd>${fmtDate(last.date)} ・ ${num(last.km)}km</dd>
           <dt>経過</dt>
           <dd><b>${esc(st.elapsedText)}</b>（${num(st.elapsedDays)}日）${
-            st.elapsedKm !== null ? ` ・ <b>${num(st.elapsedKm)}km</b> 走行` : ''
+            st.usedKmMode
+              ? ` ・ 使用 <b>${num(st.elapsedKm)}km</b>（${st.mounted ? '装着中' : '保管中'}）`
+              : st.elapsedKm !== null ? ` ・ <b>${num(st.elapsedKm)}km</b> 走行` : ''
           }</dd>
           <dt>交換推奨</dt>
           <dd>${
             st.dueDate
               ? `<b class="due">${fmtDate(st.dueDate)}</b> <span class="${st.remainingDays < 0 ? 'bad' : ''}">${remainText(st)}</span>`
+              : st.usedKmMode && st.intervalKm
+              ? `<b class="due">使用 ${num(st.intervalKm)}km</b>`
               : st.dueKm !== undefined
               ? `<b class="due">${num(st.dueKm)}km</b>`
               : '<span class="muted">間隔が未設定です</span>'
@@ -244,7 +307,7 @@
     form.reset();
     form.elements.itemId.innerHTML = itemOptions(record ? record.itemId : itemId || data.items[0].id);
     if (record) {
-      ['id', 'date', 'km', 'partNumber', 'brand', 'partsCost', 'laborCost', 'shop', 'memo', ...MEASURES.map((m) => m.key)].forEach((k) => {
+      ['id', 'date', 'km', 'partNumber', 'brand', 'shop', 'memo', ...COST_FIELDS.map((c) => c.key), ...MEASURES.map((m) => m.key)].forEach((k) => {
         form.elements[k].value = record[k] ?? '';
       });
       $('#form-title').textContent = '交換記録を編集';
@@ -270,20 +333,37 @@
   let editingRecord = null;
 
   // 残量入力欄を最初から開いておく項目
-  const MEASURE_ITEMS = ['measurement', 'brake-pad', 'tires', 'tire-rotation'];
+  const MEASURE_ITEMS = ['measurement', 'brake-pad', 'tire-rotation'];
 
   /** 項目に応じてフォームの表示を切り替える */
   function updateItemSpecific() {
     const item = itemById(form.elements.itemId.value);
     const hasValue = MEASURES.some((m) => form.elements[m.key].value !== '');
-    $('#measure-box').open = hasValue || (item && MEASURE_ITEMS.includes(item.id));
-    $('#part-fieldset').hidden = !!(item && item.measureOnly);
+    $('#measure-box').open = hasValue || !!(item && (MEASURE_ITEMS.includes(item.id) || item.tireSet));
+    // 残量測定・履き替えでは部品情報は使わない
+    $('#part-fieldset').hidden = !!(item && item.kind);
+    // タイヤ脱着料は購入・履き替え、エアーバルブ交換料・タイヤ処分料は購入のときだけ
+    const purchase = !!(item && item.tireSet && !item.kind);
+    $('#tire-fees').hidden = !(item && item.tireSet);
+    form.elements.valveFee.closest('label').hidden = !purchase;
+    form.elements.disposalFee.closest('label').hidden = !purchase;
+    updateCostTotal();
+  }
+
+  /** 残り溝をどちらのタイヤとして記録するかを表示する */
+  function updateTreadLabel() {
+    const item = itemById(form.elements.itemId.value);
+    const date = form.elements.date.value || todayStr();
+    const km = toNum(form.elements.km.value);
+    const set =
+      (item && item.tireSet) || tireSetAt(tireEventsBefore(date, km, form.elements.id.value), date, km) || 'summer';
+    $('#tread-set-label').textContent = `（${TIRE_SETS[set]}）`;
   }
 
   /** 内訳のない古い記録の「費用」。部品代・工賃が空のまま保存したときはこれを残す */
   function legacyCost() {
     const r = editingRecord;
-    if (!r || Number.isFinite(r.partsCost) || Number.isFinite(r.laborCost)) return null;
+    if (!r || COST_FIELDS.some((c) => Number.isFinite(r[c.key]))) return null;
     return Number.isFinite(r.cost) ? r.cost : null;
   }
 
@@ -301,22 +381,29 @@
       const n = toNum(form.elements[name].value);
       return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
     };
-    return { partsCost: v('partsCost'), laborCost: v('laborCost') };
+    const out = {};
+    COST_FIELDS.forEach((c) => {
+      // 非表示の欄（その項目では使わない料金）は保存しない
+      const hidden = form.elements[c.key].closest('[hidden]');
+      out[c.key] = hidden ? null : v(c.key);
+    });
+    return out;
   }
+  const noCostInput = (c) => COST_FIELDS.every((f) => c[f.key] === null);
 
-  /** 部品代 + 工賃 の合計をフォームに表示する */
+  /** 部品代・工賃・タイヤ関係の料金の合計をフォームに表示する */
   function updateCostTotal() {
     const c = costInputs();
     const legacy = legacyCost();
-    const useLegacy = c.partsCost === null && c.laborCost === null && legacy !== null;
+    const useLegacy = noCostInput(c) && legacy !== null;
     const total = useLegacy ? legacy : totalCost(c);
     $('#cost-total').textContent = total !== null ? `¥${num(total)}` : '—';
     const note = $('#legacy-cost-note');
     note.hidden = legacy === null;
     note.textContent = useLegacy
-      ? `この記録の費用 ¥${num(legacy)} は内訳がありません。部品代・工賃を入力すると、その合計で置き換わります。`
+      ? `この記録の費用 ¥${num(legacy)} は内訳がありません。部品代・工賃などを入力すると、その合計で置き換わります。`
       : legacy !== null
-      ? `以前の費用 ¥${num(legacy)} は、部品代・工賃の合計で置き換わります。`
+      ? `以前の費用 ¥${num(legacy)} は、入力した金額の合計で置き換わります。`
       : '';
   }
 
@@ -342,22 +429,53 @@
     const item = itemById(form.elements.itemId.value);
     const date = form.elements.date.value;
     const km = toNum(form.elements.km.value);
+    updateTreadLabel();
     if (!item || !date) {
       el.hidden = true;
       return;
     }
-    if (item.measureOnly) {
-      const latest = latestMeasurements(vehicleRecords().filter((r) => r.id !== form.elements.id.value && r.date <= date));
-      const tags = MEASURES.filter((m) => latest[m.key]).map(
-        (m) => `<span>${m.short} <b>${mm(latest[m.key].value)}</b>mm</span>`
-      );
+    const editingId = form.elements.id.value;
+    if (item.kind === 'measure') {
+      const before = vehicleRecords().filter((r) => r.id !== editingId && r.date <= date);
+      const events = tireEventsBefore(date, km, editingId);
+      const set = tireSetAt(events, date, km) || 'summer';
+      const padLatest = latestMeasurements(before);
+      const treadLatest = latestMeasurements(before.filter((r) => tireSetOfRecord(r, events) === set));
+      const tags = MEASURES.map((m) => {
+        const x = m.group === 'tread' ? treadLatest[m.key] : padLatest[m.key];
+        const label = m.group === 'tread' ? `${TIRE_SETS[set].slice(0, 1)}${m.short}` : m.short;
+        return x ? `<span>${label} <b>${mm(x.value)}</b>mm</span>` : '';
+      }).filter(Boolean);
       el.innerHTML = tags.length
         ? `<div class="muted">前回までの測定値</div><div class="measure-tags">${tags.join('')}</div>`
         : '<div class="muted">前回の測定記録はありません（初回記録）</div>';
       el.hidden = false;
       return;
     }
-    const editingId = form.elements.id.value;
+    if (item.kind === 'swap') {
+      const u = tireUsage(tireEventsBefore(date, km, editingId), km);
+      const lines = [];
+      if (!u.mounted) {
+        lines.push('<div class="muted">これまでのタイヤの記録がありません。この履き替えから使用距離を数えます。</div>');
+      } else if (u.mounted === item.tireSet) {
+        lines.push(`<div class="bad small">この時点ですでに${TIRE_SETS[item.tireSet]}を装着している記録になっています。項目を確認してください。</div>`);
+      } else {
+        const off = u.mounted;
+        lines.push(
+          `<div><span class="muted">取り外し</span> ${TIRE_SETS[off]}（${fmtDate(u.mountedSince.date)} から装着）</div>`,
+          km !== null
+            ? `<div><span class="muted">${TIRE_SETS[off]}の使用距離</span> <b>${num(u.sets[off].km)}km</b>${u.sets[off].since ? `<small class="muted">（${fmtDate(u.sets[off].since.date)} 購入から）</small>` : ''}</div>`
+            : ''
+        );
+      }
+      const on = u.sets[item.tireSet];
+      if (on.tracked) {
+        lines.push(`<div><span class="muted">${TIRE_SETS[item.tireSet]}のこれまでの使用距離</span> <b>${num(on.km)}km</b></div>`);
+      }
+      el.innerHTML = lines.join('');
+      el.hidden = false;
+      return;
+    }
     const prev = sortRecordsDesc(
       vehicleRecords().filter((r) => r.itemId === item.id && r.id !== editingId && r.date <= date)
     )[0];
@@ -366,10 +484,12 @@
     if (prev) {
       const days = diffDays(prev.date, date);
       const dKm = km !== null ? km - prev.km : null;
+      // 夏・冬タイヤは、装着していた間に走った距離を表示する
+      const used = item.tireSet && km !== null ? tireUsage(tireEventsBefore(date, km, editingId), km).sets[item.tireSet].km : null;
       lines.push(
         `<div><span class="muted">前回交換</span> ${fmtDate(prev.date)} ・ ${num(prev.km)}km</div>`,
         `<div><span class="muted">前回から</span> <b>${esc(formatElapsed(prev.date, date))}</b>（${num(days)}日）${
-          dKm !== null ? ` ・ <b class="${dKm < 0 ? 'bad' : ''}">${num(dKm)}km</b>` : ''
+          used !== null ? ` ・ 使用 <b>${num(used)}km</b>` : dKm !== null ? ` ・ <b class="${dKm < 0 ? 'bad' : ''}">${num(dKm)}km</b>` : ''
         }</div>`
       );
       if (dKm !== null && dKm < 0) lines.push('<div class="bad small">前回より走行距離が少なくなっています。入力を確認してください。</div>');
@@ -379,7 +499,8 @@
 
     const next = [];
     if (Number(item.intervalMonths) > 0) next.push(`${fmtDate(Calc.addMonths(date, Number(item.intervalMonths)))}`);
-    if (Number(item.intervalKm) > 0 && km !== null) next.push(`${num(km + Number(item.intervalKm))}km`);
+    if (Number(item.intervalKm) > 0 && item.tireSet) next.push(`使用 ${num(Number(item.intervalKm))}km`);
+    else if (Number(item.intervalKm) > 0 && km !== null) next.push(`${num(km + Number(item.intervalKm))}km`);
     if (next.length) {
       lines.push(`<div><span class="muted">次回交換推奨</span> <b class="due">${next.join(' または ')}</b> <small class="muted">（早い方）</small></div>`);
     }
@@ -388,7 +509,7 @@
   }
 
   form.addEventListener('input', (e) => {
-    if (e.target.name === 'partsCost' || e.target.name === 'laborCost') updateCostTotal();
+    if (COST_FIELDS.some((c) => c.key === e.target.name)) updateCostTotal();
     else if (e.target.name !== 'itemId') updatePreview();
   });
   form.elements.itemId.addEventListener('change', () => {
@@ -407,7 +528,7 @@
       return;
     }
     const item = itemById(f.itemId.value);
-    if (item && item.measureOnly && !MEASURES.some((m) => f[m.key].value !== '')) {
+    if (item && item.kind === 'measure' && !MEASURES.some((m) => f[m.key].value !== '')) {
       toast('ブレーキパッドかタイヤの残量を1つ以上入力してください');
       $('#measure-box').open = true;
       return;
@@ -425,8 +546,8 @@
       shop: f.shop.value.trim(),
       memo: f.memo.value.trim(),
     };
-    // 費用 = 部品代 + 工賃（内訳のない古い記録で未入力なら、以前の費用を残す）
-    rec.cost = rec.partsCost === null && rec.laborCost === null ? legacyCost() : totalCost(rec);
+    // 費用 = 部品代 + 工賃 + タイヤ関係の料金（内訳のない古い記録で未入力なら、以前の費用を残す）
+    rec.cost = noCostInput(rec) ? legacyCost() : totalCost(rec);
     const idx = data.records.findIndex((r) => r.id === rec.id);
     if (idx >= 0) {
       rec.vehicleId = data.records[idx].vehicleId;
@@ -469,15 +590,28 @@
       return;
     }
 
+    const events = tireEventsOf(all);
     $('#history-list').innerHTML = list
       .map((r) => {
         const item = itemById(r.itemId);
         // 同じ項目の 1 つ前の記録との差
         const prev = sortRecordsDesc(all.filter((x) => x.itemId === r.itemId && x.id !== r.id && x.date <= r.date &&
           (x.date < r.date || x.km < r.km)))[0];
-        const interval = prev
+        // この記録より前のタイヤイベントで、その時点の夏・冬タイヤの使用距離を求める
+        const tireBefore = item && item.tireSet
+          ? tireUsage(events.filter((e) => e.id !== r.id && (e.date < r.date || (e.date === r.date && e.km <= r.km))), r.km)
+          : null;
+        let interval = prev
           ? `前回から ${esc(formatElapsed(prev.date, r.date))} ・ ${num(r.km - prev.km)}km`
           : '初回記録';
+        if (tireBefore && item.kind === 'swap') {
+          const off = tireBefore.mounted;
+          interval = off && off !== item.tireSet
+            ? `${TIRE_SETS[off]}を取り外し（使用 ${num(tireBefore.sets[off].km)}km）`
+            : `${TIRE_SETS[item.tireSet]}を装着`;
+        } else if (tireBefore && prev) {
+          interval = `前回から ${esc(formatElapsed(prev.date, r.date))} ・ 使用 ${num(tireBefore.sets[item.tireSet].km)}km`;
+        }
         return `
         <article class="card history-item">
           <div class="history-head">
@@ -490,7 +624,7 @@
           <div class="small muted">${interval}</div>
           ${r.partNumber ? `<div class="part"><span class="tag">型番</span> ${esc(r.partNumber)}</div>` : ''}
           ${r.brand ? `<div class="part"><span class="tag">商品</span> ${esc(r.brand)}</div>` : ''}
-          ${measureTags(r)}
+          ${measureTags(r, tireSetOfRecord(r, events))}
           <div class="small meta">
             ${costText(r)}
             ${r.shop ? `<span>${esc(r.shop)}</span>` : ''}
@@ -505,10 +639,11 @@
       .join('');
   }
 
-  function measureTags(r) {
+  function measureTags(r, set) {
     const tags = MEASURES.filter((m) => Number.isFinite(r[m.key])).map((m) => {
-      const lv = measureLevel(m.key, r[m.key]);
-      return `<span class="${lv === 'overdue' ? 'bad' : ''}">${m.short} <b>${mm(r[m.key])}</b>mm</span>`;
+      const lv = measureLevel(m.key, r[m.key], set);
+      const label = m.group === 'tread' ? `${TIRE_SETS[set].slice(0, 1)}${m.short}` : m.short;
+      return `<span class="${lv === 'overdue' ? 'bad' : ''}">${label} <b>${mm(r[m.key])}</b>mm</span>`;
     });
     return tags.length ? `<div class="measure-tags"><span class="tag">残量</span>${tags.join('')}</div>` : '';
   }
@@ -516,9 +651,7 @@
   function costText(r) {
     const total = totalCost(r);
     if (total === null) return '';
-    const parts = [];
-    if (Number.isFinite(r.partsCost)) parts.push(`部品代 ¥${num(r.partsCost)}`);
-    if (Number.isFinite(r.laborCost)) parts.push(`工賃 ¥${num(r.laborCost)}`);
+    const parts = COST_FIELDS.filter((c) => Number.isFinite(r[c.key])).map((c) => `${c.label} ¥${num(r[c.key])}`);
     return `<span class="cost">費用 <b>¥${num(total)}</b>${parts.length ? `（${parts.join(' ＋ ')}）` : ''}</span>`;
   }
 
@@ -543,7 +676,7 @@
       <div class="item-table">
         <div class="th">項目</div><div class="th">km</div><div class="th">ヶ月</div><div class="th"></div>
         ${data.items
-          .filter((i) => !i.measureOnly)
+          .filter((i) => !i.kind)
           .map(
             (i) => `
           <div class="name">${esc(i.name)}<small class="muted"> ${esc(i.category || '')}</small></div>
@@ -636,24 +769,29 @@
 
   $('#btn-export-csv').addEventListener('click', () => {
     const cell = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const header = ['車両', '項目', '交換日', '走行距離(km)', '型番', 'メーカー・商品名', '部品代(円)', '工賃(円)', '費用合計(円)',
-      ...MEASURES.map((m) => `${m.short}(mm)`), '店舗', 'メモ'];
-    const lines = sortRecordsDesc(data.records).map((r) =>
-      [
+    const header = ['車両', '項目', '交換日', '走行距離(km)', '型番', 'メーカー・商品名',
+      ...COST_FIELDS.map((c) => `${c.label}(円)`), '費用合計(円)',
+      ...MEASURES.map((m) => `${m.short}(mm)`), '残り溝のタイヤ', '店舗', 'メモ'];
+    // 車両ごとのタイヤイベント（残り溝が夏・冬どちらのものかの判定に使う）
+    const eventsByVehicle = new Map(data.vehicles.map((v) => [v.id, tireEventsOf(vehicleRecords(v.id))]));
+    const lines = sortRecordsDesc(data.records).map((r) => {
+      const hasTread = MEASURES.some((m) => m.group === 'tread' && Number.isFinite(r[m.key]));
+      const set = hasTread ? TIRE_SETS[tireSetOfRecord(r, eventsByVehicle.get(r.vehicleId) || [])] : '';
+      return [
         data.vehicles.find((v) => v.id === r.vehicleId)?.name,
         itemById(r.itemId)?.name,
         r.date,
         r.km,
         r.partNumber,
         r.brand,
-        r.partsCost,
-        r.laborCost,
+        ...COST_FIELDS.map((c) => r[c.key]),
         totalCost(r),
         ...MEASURES.map((m) => r[m.key]),
+        set,
         r.shop,
         r.memo,
-      ].map(cell).join(',')
-    );
+      ].map(cell).join(',');
+    });
     // Excel で文字化けしないよう BOM を付ける
     download(`car-maintenance-${todayStr()}.csv`, '﻿' + [header.map(cell).join(','), ...lines].join('\r\n'), 'text/csv');
   });
