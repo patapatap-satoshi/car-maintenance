@@ -183,7 +183,50 @@
     return Number.isFinite(rec.cost) ? rec.cost : null;
   }
 
+  /**
+   * 残量測定の項目と判定基準（mm）。
+   *   red   : この値以下は交換が必要
+   *   yellow: この値以下はそろそろ交換
+   * タイヤの 1.6mm は法定の使用限度（スリップサイン）。
+   */
+  const MEASURES = [
+    { key: 'padF', group: 'pad', label: 'ブレーキパッド F', short: 'Fパッド', red: 3, yellow: 5 },
+    { key: 'padR', group: 'pad', label: 'ブレーキパッド R', short: 'Rパッド', red: 3, yellow: 5 },
+    { key: 'treadF', group: 'tread', label: 'タイヤ残り溝 F', short: 'Fタイヤ', red: 1.6, yellow: 4 },
+    { key: 'treadR', group: 'tread', label: 'タイヤ残り溝 R', short: 'Rタイヤ', red: 1.6, yellow: 4 },
+  ];
+
+  /** 測定値の状態: 'overdue'（交換が必要）/ 'soon'（そろそろ）/ 'ok' */
+  function measureLevel(key, value) {
+    const m = MEASURES.find((x) => x.key === key);
+    if (!m || !Number.isFinite(value)) return null;
+    if (value <= m.red) return 'overdue';
+    if (value <= m.yellow) return 'soon';
+    return 'ok';
+  }
+
+  /**
+   * 記録の中から、測定項目ごとに最新の値と 1 つ前の値を取り出す。
+   * @returns {{[key]: {value, date, km, prev: {value, date, km}|null}}}
+   */
+  function latestMeasurements(records) {
+    const sorted = records
+      .slice()
+      .sort((a, b) => (a.date !== b.date ? (a.date < b.date ? 1 : -1) : (b.km || 0) - (a.km || 0)));
+    const out = {};
+    for (const m of MEASURES) {
+      const hits = sorted.filter((r) => Number.isFinite(r[m.key]));
+      if (!hits.length) continue;
+      const pick = (r) => ({ value: r[m.key], date: r.date, km: r.km });
+      out[m.key] = { ...pick(hits[0]), prev: hits[1] ? pick(hits[1]) : null };
+    }
+    return out;
+  }
+
   return {
+    MEASURES,
+    measureLevel,
+    latestMeasurements,
     totalCost,
     parseDate,
     formatDate,

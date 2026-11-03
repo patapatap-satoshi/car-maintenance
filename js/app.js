@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const { todayStr, formatElapsed, diffDays, avgKmPerDay, latestOdometer, computeStatus, totalCost } = Calc;
+  const { todayStr, formatElapsed, diffDays, avgKmPerDay, latestOdometer, computeStatus, totalCost, MEASURES, measureLevel, latestMeasurements } = Calc;
   let data = Store.load();
 
   const $ = (sel, el = document) => el.querySelector(sel);
@@ -119,6 +119,7 @@
     const rows = [];
     const unrecorded = [];
     data.items.forEach((item) => {
+      if (item.measureOnly) return;
       const last = lastRecordOf(item.id);
       if (!last) return unrecorded.push(item);
       rows.push({ item, last, st: computeStatus(item, last, ctx) });
@@ -140,6 +141,7 @@
            <button type="button" class="btn primary" data-action="new-record">最初の記録を追加</button>
          </div>`;
 
+    renderMeasurePanel();
     $('#status-list').innerHTML = rows.map(({ item, last, st }) => statusCard(item, last, st)).join('');
 
     $('#unrecorded-wrap').hidden = !unrecorded.length;
@@ -151,6 +153,36 @@
     $('#avg-km').textContent = ctx.kmPerDay
       ? `1日 約${ctx.kmPerDay.toFixed(1)}km ／ 月 約${num(ctx.kmPerDay * 30.4)}km`
       : '記録が2週間分以上たまると計算されます';
+  }
+
+  const LEVEL_LABEL = { overdue: '交換', soon: 'そろそろ', ok: '' };
+  const mm = (v) => (Number.isFinite(v) ? (Math.round(v * 10) / 10).toFixed(1) : '—');
+
+  /** ブレーキパッド残量・タイヤ残り溝の最新値 */
+  function renderMeasurePanel() {
+    const latest = latestMeasurements(vehicleRecords());
+    const has = Object.keys(latest).length > 0;
+    const cell = (m) => {
+      const x = latest[m.key];
+      if (!x) return `<div class="measure-cell none"><div class="small muted">${m.short}</div><div class="v">—</div><div class="d">未測定</div></div>`;
+      const lv = measureLevel(m.key, x.value);
+      const diff = x.prev ? Math.round((x.value - x.prev.value) * 10) / 10 : null;
+      return `<div class="measure-cell ${lv}">
+          <div class="small muted">${m.short}${LEVEL_LABEL[lv] ? `<span class="lv">${LEVEL_LABEL[lv]}</span>` : ''}</div>
+          <div class="v">${mm(x.value)}<small>mm</small></div>
+          <div class="d">${fmtDate(x.date)}・${num(x.km)}km${
+            diff !== null ? `<br>前回 ${mm(x.prev.value)}mm から ${diff > 0 ? '+' : ''}${mm(diff)}mm` : ''
+          }</div>
+        </div>`;
+    };
+    $('#measure-panel').innerHTML = `
+      <article class="card measure-card">
+        <h3>ブレーキパッド・タイヤ残量</h3>
+        ${has ? `<div class="measure-table">${MEASURES.map(cell).join('')}</div>` : '<p class="muted small">まだ測定記録がありません。点検のときに測った値を記録できます。</p>'}
+        <div class="card-actions">
+          <button type="button" class="btn small secondary" data-action="new-record" data-item="measurement">残量を記録</button>
+        </div>
+      </article>`;
   }
 
   function statusCard(item, last, st) {
@@ -212,7 +244,7 @@
     form.reset();
     form.elements.itemId.innerHTML = itemOptions(record ? record.itemId : itemId || data.items[0].id);
     if (record) {
-      ['id', 'date', 'km', 'partNumber', 'brand', 'partsCost', 'laborCost', 'shop', 'memo'].forEach((k) => {
+      ['id', 'date', 'km', 'partNumber', 'brand', 'partsCost', 'laborCost', 'shop', 'memo', ...MEASURES.map((m) => m.key)].forEach((k) => {
         form.elements[k].value = record[k] ?? '';
       });
       $('#form-title').textContent = '交換記録を編集';
@@ -228,6 +260,7 @@
       prefillFromLast();
     }
     editingRecord = record || null;
+    updateItemSpecific();
     updateSuggestions();
     updatePreview();
     updateCostTotal();
@@ -236,11 +269,31 @@
 
   let editingRecord = null;
 
+  // 残量入力欄を最初から開いておく項目
+  const MEASURE_ITEMS = ['measurement', 'brake-pad', 'tires', 'tire-rotation'];
+
+  /** 項目に応じてフォームの表示を切り替える */
+  function updateItemSpecific() {
+    const item = itemById(form.elements.itemId.value);
+    const hasValue = MEASURES.some((m) => form.elements[m.key].value !== '');
+    $('#measure-box').open = hasValue || (item && MEASURE_ITEMS.includes(item.id));
+    $('#part-fieldset').hidden = !!(item && item.measureOnly);
+  }
+
   /** 内訳のない古い記録の「費用」。部品代・工賃が空のまま保存したときはこれを残す */
   function legacyCost() {
     const r = editingRecord;
     if (!r || Number.isFinite(r.partsCost) || Number.isFinite(r.laborCost)) return null;
     return Number.isFinite(r.cost) ? r.cost : null;
+  }
+
+  function measureInputs() {
+    const out = {};
+    MEASURES.forEach((m) => {
+      const n = toNum(form.elements[m.key].value);
+      out[m.key] = Number.isFinite(n) && n >= 0 ? Math.round(n * 10) / 10 : null;
+    });
+    return out;
   }
 
   function costInputs() {
@@ -293,6 +346,17 @@
       el.hidden = true;
       return;
     }
+    if (item.measureOnly) {
+      const latest = latestMeasurements(vehicleRecords().filter((r) => r.id !== form.elements.id.value && r.date <= date));
+      const tags = MEASURES.filter((m) => latest[m.key]).map(
+        (m) => `<span>${m.short} <b>${mm(latest[m.key].value)}</b>mm</span>`
+      );
+      el.innerHTML = tags.length
+        ? `<div class="muted">前回までの測定値</div><div class="measure-tags">${tags.join('')}</div>`
+        : '<div class="muted">前回の測定記録はありません（初回記録）</div>';
+      el.hidden = false;
+      return;
+    }
     const editingId = form.elements.id.value;
     const prev = sortRecordsDesc(
       vehicleRecords().filter((r) => r.itemId === item.id && r.id !== editingId && r.date <= date)
@@ -329,6 +393,7 @@
   });
   form.elements.itemId.addEventListener('change', () => {
     if (!form.elements.id.value) prefillFromLast();
+    updateItemSpecific();
     updateSuggestions();
     updatePreview();
   });
@@ -341,6 +406,12 @@
       toast('交換日と走行距離を入力してください');
       return;
     }
+    const item = itemById(f.itemId.value);
+    if (item && item.measureOnly && !MEASURES.some((m) => f[m.key].value !== '')) {
+      toast('ブレーキパッドかタイヤの残量を1つ以上入力してください');
+      $('#measure-box').open = true;
+      return;
+    }
     const rec = {
       id: f.id.value || Store.uid(),
       vehicleId: data.activeVehicleId,
@@ -350,6 +421,7 @@
       partNumber: f.partNumber.value.trim(),
       brand: f.brand.value.trim(),
       ...costInputs(),
+      ...measureInputs(),
       shop: f.shop.value.trim(),
       memo: f.memo.value.trim(),
     };
@@ -418,6 +490,7 @@
           <div class="small muted">${interval}</div>
           ${r.partNumber ? `<div class="part"><span class="tag">型番</span> ${esc(r.partNumber)}</div>` : ''}
           ${r.brand ? `<div class="part"><span class="tag">商品</span> ${esc(r.brand)}</div>` : ''}
+          ${measureTags(r)}
           <div class="small meta">
             ${costText(r)}
             ${r.shop ? `<span>${esc(r.shop)}</span>` : ''}
@@ -430,6 +503,14 @@
         </article>`;
       })
       .join('');
+  }
+
+  function measureTags(r) {
+    const tags = MEASURES.filter((m) => Number.isFinite(r[m.key])).map((m) => {
+      const lv = measureLevel(m.key, r[m.key]);
+      return `<span class="${lv === 'overdue' ? 'bad' : ''}">${m.short} <b>${mm(r[m.key])}</b>mm</span>`;
+    });
+    return tags.length ? `<div class="measure-tags"><span class="tag">残量</span>${tags.join('')}</div>` : '';
   }
 
   function costText(r) {
@@ -462,6 +543,7 @@
       <div class="item-table">
         <div class="th">項目</div><div class="th">km</div><div class="th">ヶ月</div><div class="th"></div>
         ${data.items
+          .filter((i) => !i.measureOnly)
           .map(
             (i) => `
           <div class="name">${esc(i.name)}<small class="muted"> ${esc(i.category || '')}</small></div>
@@ -554,7 +636,8 @@
 
   $('#btn-export-csv').addEventListener('click', () => {
     const cell = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const header = ['車両', '項目', '交換日', '走行距離(km)', '型番', 'メーカー・商品名', '部品代(円)', '工賃(円)', '費用合計(円)', '店舗', 'メモ'];
+    const header = ['車両', '項目', '交換日', '走行距離(km)', '型番', 'メーカー・商品名', '部品代(円)', '工賃(円)', '費用合計(円)',
+      ...MEASURES.map((m) => `${m.short}(mm)`), '店舗', 'メモ'];
     const lines = sortRecordsDesc(data.records).map((r) =>
       [
         data.vehicles.find((v) => v.id === r.vehicleId)?.name,
@@ -566,6 +649,7 @@
         r.partsCost,
         r.laborCost,
         totalCost(r),
+        ...MEASURES.map((m) => r[m.key]),
         r.shop,
         r.memo,
       ].map(cell).join(',')
