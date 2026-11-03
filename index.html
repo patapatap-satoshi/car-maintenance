@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#1f6feb" />
+  <title>クルマ整備ノート</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-row">
+      <h1>クルマ整備ノート</h1>
+      <select id="vehicle-select" aria-label="車両を選択"></select>
+    </div>
+    <div class="odo-row">
+      <span>現在の走行距離</span>
+      <strong id="current-km">—</strong>
+      <span id="current-km-date" class="muted"></span>
+      <button type="button" class="link-btn" id="btn-update-km">更新</button>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button type="button" role="tab" data-view="dashboard" class="active">交換時期</button>
+      <button type="button" role="tab" data-view="record">記録する</button>
+      <button type="button" role="tab" data-view="history">履歴</button>
+      <button type="button" role="tab" data-view="settings">設定</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- 交換時期ダッシュボード -->
+    <section id="view-dashboard" class="view active">
+      <div id="summary" class="summary"></div>
+      <div id="status-list" class="cards"></div>
+      <details id="unrecorded-wrap" class="unrecorded">
+        <summary>まだ記録がない項目 <span id="unrecorded-count"></span></summary>
+        <div id="unrecorded-list" class="chips"></div>
+      </details>
+      <p class="note">
+        推奨時期は「期間」と「走行距離」のうち早い方です。距離による到達日は、これまでの記録から求めた平均走行距離（<span id="avg-km">—</span>）で予測しています。
+      </p>
+    </section>
+
+    <!-- 記録フォーム -->
+    <section id="view-record" class="view">
+      <form id="record-form" class="card form" autocomplete="off">
+        <h2 id="form-title">交換記録を追加</h2>
+        <input type="hidden" name="id" />
+        <label>
+          交換した項目 <span class="req">必須</span>
+          <select name="itemId" required></select>
+        </label>
+        <div class="grid-2">
+          <label>
+            交換日 <span class="req">必須</span>
+            <input type="date" name="date" required />
+          </label>
+          <label>
+            走行距離 (km) <span class="req">必須</span>
+            <input type="number" name="km" inputmode="numeric" min="0" step="1" required placeholder="例: 52300" />
+          </label>
+        </div>
+
+        <div id="preview" class="preview" hidden></div>
+
+        <fieldset>
+          <legend>部品情報</legend>
+          <label>
+            型番・品番
+            <input type="text" name="partNumber" list="part-number-list" placeholder="例: 15400-RTA-003" />
+            <datalist id="part-number-list"></datalist>
+          </label>
+          <label>
+            メーカー・商品名
+            <input type="text" name="brand" list="brand-list" placeholder="例: ホンダ純正 ウルトラ LEO 0W-20 4L" />
+            <datalist id="brand-list"></datalist>
+          </label>
+        </fieldset>
+
+        <fieldset>
+          <legend>その他</legend>
+          <div class="grid-2">
+            <label>
+              費用 (円)
+              <input type="number" name="cost" inputmode="numeric" min="0" step="1" placeholder="例: 5800" />
+            </label>
+            <label>
+              作業した店舗
+              <input type="text" name="shop" list="shop-list" placeholder="例: 自分 / ○○オートバックス" />
+              <datalist id="shop-list"></datalist>
+            </label>
+          </div>
+          <label>
+            メモ
+            <textarea name="memo" rows="2" placeholder="例: 前後ローテーションも実施"></textarea>
+          </label>
+        </fieldset>
+
+        <div class="form-actions">
+          <button type="button" class="btn secondary" id="btn-cancel-edit" hidden>キャンセル</button>
+          <button type="submit" class="btn primary" id="btn-submit">保存する</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- 履歴 -->
+    <section id="view-history" class="view">
+      <div class="toolbar">
+        <select id="history-filter" aria-label="項目で絞り込み"></select>
+        <input type="search" id="history-search" placeholder="型番・メモで検索" />
+      </div>
+      <div id="history-list" class="history"></div>
+    </section>
+
+    <!-- 設定 -->
+    <section id="view-settings" class="view">
+      <div class="card">
+        <h2>車両</h2>
+        <div id="vehicle-list"></div>
+        <form id="vehicle-form" class="inline-form">
+          <input type="text" name="name" placeholder="車両名（例: フィット）" required />
+          <button type="submit" class="btn secondary">車両を追加</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>交換推奨間隔</h2>
+        <p class="muted small">空欄にするとその条件は使いません。期間と距離の早い方で推奨時期を出します。</p>
+        <div id="item-settings"></div>
+        <form id="item-form" class="inline-form wrap">
+          <input type="text" name="name" placeholder="項目名（例: デフオイル）" required />
+          <select name="category"></select>
+          <input type="number" name="intervalKm" min="0" step="100" placeholder="km" />
+          <input type="number" name="intervalMonths" min="0" step="1" placeholder="ヶ月" />
+          <button type="submit" class="btn secondary">項目を追加</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>バックアップ</h2>
+        <p class="muted small">データはこの端末のブラウザに保存されています。機種変更やブラウザのデータ削除に備えて、定期的に書き出してください。</p>
+        <div class="btn-row">
+          <button type="button" class="btn secondary" id="btn-export">JSON で書き出す</button>
+          <button type="button" class="btn secondary" id="btn-export-csv">CSV で書き出す</button>
+          <label class="btn secondary file-btn">
+            読み込む
+            <input type="file" id="import-file" accept="application/json,.json" hidden />
+          </label>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="js/calc.js"></script>
+  <script src="js/store.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
