@@ -5,7 +5,8 @@
  *   version: 1,
  *   items:    [{id, name, category, intervalKm, intervalMonths, builtin}],
  *   vehicles: [{id, name, odometerLog: [{date, km}]}],
- *   records:  [{id, vehicleId, itemId, date, km, partNumber, brand, cost, shop, memo}],
+ *   records:  [{id, vehicleId, itemId, date, km, partNumber, brand,
+ *              partsCost, laborCost, cost(= 部品代 + 工賃), shop, memo}],
  *   activeVehicleId
  * }
  */

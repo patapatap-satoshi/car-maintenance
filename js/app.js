@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const { todayStr, formatElapsed, diffDays, avgKmPerDay, latestOdometer, computeStatus } = Calc;
+  const { todayStr, formatElapsed, diffDays, avgKmPerDay, latestOdometer, computeStatus, totalCost } = Calc;
   let data = Store.load();
 
   const $ = (sel, el = document) => el.querySelector(sel);
@@ -212,7 +212,7 @@
     form.reset();
     form.elements.itemId.innerHTML = itemOptions(record ? record.itemId : itemId || data.items[0].id);
     if (record) {
-      ['id', 'date', 'km', 'partNumber', 'brand', 'cost', 'shop', 'memo'].forEach((k) => {
+      ['id', 'date', 'km', 'partNumber', 'brand', 'partsCost', 'laborCost', 'shop', 'memo'].forEach((k) => {
         form.elements[k].value = record[k] ?? '';
       });
       $('#form-title').textContent = '交換記録を編集';
@@ -227,9 +227,44 @@
       // 前回と同じ部品を使うことが多いので、型番などを引き継ぐ
       prefillFromLast();
     }
+    editingRecord = record || null;
     updateSuggestions();
     updatePreview();
+    updateCostTotal();
     showView('record');
+  }
+
+  let editingRecord = null;
+
+  /** 内訳のない古い記録の「費用」。部品代・工賃が空のまま保存したときはこれを残す */
+  function legacyCost() {
+    const r = editingRecord;
+    if (!r || Number.isFinite(r.partsCost) || Number.isFinite(r.laborCost)) return null;
+    return Number.isFinite(r.cost) ? r.cost : null;
+  }
+
+  function costInputs() {
+    const v = (name) => {
+      const n = toNum(form.elements[name].value);
+      return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+    };
+    return { partsCost: v('partsCost'), laborCost: v('laborCost') };
+  }
+
+  /** 部品代 + 工賃 の合計をフォームに表示する */
+  function updateCostTotal() {
+    const c = costInputs();
+    const legacy = legacyCost();
+    const useLegacy = c.partsCost === null && c.laborCost === null && legacy !== null;
+    const total = useLegacy ? legacy : totalCost(c);
+    $('#cost-total').textContent = total !== null ? `¥${num(total)}` : '—';
+    const note = $('#legacy-cost-note');
+    note.hidden = legacy === null;
+    note.textContent = useLegacy
+      ? `この記録の費用 ¥${num(legacy)} は内訳がありません。部品代・工賃を入力すると、その合計で置き換わります。`
+      : legacy !== null
+      ? `以前の費用 ¥${num(legacy)} は、部品代・工賃の合計で置き換わります。`
+      : '';
   }
 
   function prefillFromLast() {
@@ -289,7 +324,8 @@
   }
 
   form.addEventListener('input', (e) => {
-    if (e.target.name !== 'itemId') updatePreview();
+    if (e.target.name === 'partsCost' || e.target.name === 'laborCost') updateCostTotal();
+    else if (e.target.name !== 'itemId') updatePreview();
   });
   form.elements.itemId.addEventListener('change', () => {
     if (!form.elements.id.value) prefillFromLast();
@@ -313,10 +349,12 @@
       km: Math.round(km),
       partNumber: f.partNumber.value.trim(),
       brand: f.brand.value.trim(),
-      cost: toNum(f.cost.value),
+      ...costInputs(),
       shop: f.shop.value.trim(),
       memo: f.memo.value.trim(),
     };
+    // 費用 = 部品代 + 工賃（内訳のない古い記録で未入力なら、以前の費用を残す）
+    rec.cost = rec.partsCost === null && rec.laborCost === null ? legacyCost() : totalCost(rec);
     const idx = data.records.findIndex((r) => r.id === rec.id);
     if (idx >= 0) {
       rec.vehicleId = data.records[idx].vehicleId;
@@ -381,7 +419,7 @@
           ${r.partNumber ? `<div class="part"><span class="tag">型番</span> ${esc(r.partNumber)}</div>` : ''}
           ${r.brand ? `<div class="part"><span class="tag">商品</span> ${esc(r.brand)}</div>` : ''}
           <div class="small meta">
-            ${r.cost !== null && r.cost !== undefined ? `<span>¥${num(r.cost)}</span>` : ''}
+            ${costText(r)}
             ${r.shop ? `<span>${esc(r.shop)}</span>` : ''}
           </div>
           ${r.memo ? `<p class="memo">${esc(r.memo)}</p>` : ''}
@@ -392,6 +430,15 @@
         </article>`;
       })
       .join('');
+  }
+
+  function costText(r) {
+    const total = totalCost(r);
+    if (total === null) return '';
+    const parts = [];
+    if (Number.isFinite(r.partsCost)) parts.push(`部品代 ¥${num(r.partsCost)}`);
+    if (Number.isFinite(r.laborCost)) parts.push(`工賃 ¥${num(r.laborCost)}`);
+    return `<span class="cost">費用 <b>¥${num(total)}</b>${parts.length ? `（${parts.join(' ＋ ')}）` : ''}</span>`;
   }
 
   $('#history-filter').addEventListener('change', renderHistory);
@@ -507,7 +554,7 @@
 
   $('#btn-export-csv').addEventListener('click', () => {
     const cell = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const header = ['車両', '項目', '交換日', '走行距離(km)', '型番', 'メーカー・商品名', '費用(円)', '店舗', 'メモ'];
+    const header = ['車両', '項目', '交換日', '走行距離(km)', '型番', 'メーカー・商品名', '部品代(円)', '工賃(円)', '費用合計(円)', '店舗', 'メモ'];
     const lines = sortRecordsDesc(data.records).map((r) =>
       [
         data.vehicles.find((v) => v.id === r.vehicleId)?.name,
@@ -516,7 +563,9 @@
         r.km,
         r.partNumber,
         r.brand,
-        r.cost,
+        r.partsCost,
+        r.laborCost,
+        totalCost(r),
         r.shop,
         r.memo,
       ].map(cell).join(',')
