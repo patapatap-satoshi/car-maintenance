@@ -92,3 +92,83 @@ test('latestMeasurements: 項目ごとに最新値と前回値', () => {
   assert.equal(m.treadF.prev.value, 7);
   assert.equal(m.treadR.value, 6.5);
 });
+
+test('totalCost: タイヤ脱着料・エアーバルブ交換料・タイヤ処分料も合計する', () => {
+  assert.equal(C.totalCost({ partsCost: 60000, laborCost: null, mountFee: 4400, valveFee: 1320, disposalFee: 1100 }), 66820);
+  assert.equal(C.totalCost({ mountFee: 3300 }), 3300);
+});
+
+const ITEMS = [
+  { id: 'tires', tireSet: 'summer' },
+  { id: 'winter-tires', tireSet: 'winter' },
+  { id: 'tire-swap-winter', tireSet: 'winter', kind: 'swap' },
+  { id: 'tire-swap-summer', tireSet: 'summer', kind: 'swap' },
+  { id: 'engine-oil' },
+];
+
+test('tireUsage: 夏・冬それぞれ装着していた距離だけを数える', () => {
+  const recs = [
+    { id: 'a', itemId: 'tires', date: '2024-04-01', km: 10000 },        // 夏タイヤ購入
+    { id: 'b', itemId: 'engine-oil', date: '2024-08-01', km: 13000 },
+    { id: 'c', itemId: 'winter-tires', date: '2024-12-01', km: 16000 }, // 冬タイヤ購入（夏 6000km）
+    { id: 'd', itemId: 'tire-swap-summer', date: '2025-04-01', km: 19000 }, // 冬 3000km
+    { id: 'e', itemId: 'tire-swap-winter', date: '2025-12-01', km: 25000 }, // 夏 +6000km
+  ];
+  const ev = C.tireEvents(recs, ITEMS);
+  assert.equal(ev.length, 4);
+  const u = C.tireUsage(ev, 27000); // 冬 +2000km
+  assert.equal(u.mounted, 'winter');
+  assert.deepEqual(u.mountedSince, { date: '2025-12-01', km: 25000 });
+  assert.equal(u.sets.summer.km, 12000);
+  assert.equal(u.sets.winter.km, 5000);
+  assert.deepEqual(u.sets.summer.since, { date: '2024-04-01', km: 10000 });
+  assert.deepEqual(u.sets.winter.since, { date: '2024-12-01', km: 16000 });
+});
+
+test('tireUsage: 新品に交換すると、そのセットの使用距離は 0 から数え直す', () => {
+  const recs = [
+    { id: 'a', itemId: 'tires', date: '2024-04-01', km: 10000 },
+    { id: 'b', itemId: 'tire-swap-winter', date: '2024-12-01', km: 16000 },
+    { id: 'c', itemId: 'tires', date: '2025-04-01', km: 19000 }, // 春に新品の夏タイヤへ
+  ];
+  const u = C.tireUsage(C.tireEvents(recs, ITEMS), 20000);
+  assert.equal(u.mounted, 'summer');
+  assert.equal(u.sets.summer.km, 1000);
+  assert.equal(u.sets.winter.km, 3000);
+  assert.equal(u.sets.winter.since, null); // 冬タイヤは購入記録なし（履き替えのみ）
+  assert.equal(u.sets.winter.tracked, true);
+});
+
+test('tireSetAt: その時点で装着していたセット', () => {
+  const ev = C.tireEvents([
+    { id: 'a', itemId: 'tires', date: '2024-04-01', km: 10000 },
+    { id: 'b', itemId: 'tire-swap-winter', date: '2024-12-01', km: 16000 },
+  ], ITEMS);
+  assert.equal(C.tireSetAt(ev, '2024-03-01', 9000), null);
+  assert.equal(C.tireSetAt(ev, '2024-06-01', 12000), 'summer');
+  assert.equal(C.tireSetAt(ev, '2024-12-01', 16000), 'winter');
+  assert.equal(C.tireSetAt(ev, '2025-01-10', 17000), 'winter');
+});
+
+test('computeStatus: タイヤセットは使用距離で判定する', () => {
+  const item = { intervalKm: 30000, intervalMonths: 48 };
+  const last = { date: '2024-12-01', km: 16000 };
+  const ctx = { today: '2025-12-01', currentKm: 40000, kmPerDay: 30 };
+  const mounted = C.computeStatus(item, last, ctx, { usedKm: 5000, mounted: true });
+  assert.equal(mounted.elapsedKm, 5000);
+  assert.equal(mounted.remainingKm, 25000);
+  assert.equal(mounted.dueKm, 65000);
+  assert.equal(mounted.state, 'ok');
+  const stored = C.computeStatus(item, last, ctx, { usedKm: 29800, mounted: false });
+  assert.equal(stored.remainingKm, 200);
+  assert.equal(stored.dueKm, undefined);
+  assert.equal(stored.dueDateByKm, undefined);
+  assert.equal(stored.state, 'soon');
+});
+
+test('measureLevel: 冬タイヤはプラットフォームを基準に判定', () => {
+  assert.equal(C.measureLevel('treadF', 5, 'summer'), 'ok');
+  assert.equal(C.measureLevel('treadF', 5, 'winter'), 'soon');
+  assert.equal(C.measureLevel('treadF', 4, 'winter'), 'overdue');
+  assert.equal(C.measureLevel('padF', 4, 'winter'), 'soon');
+});

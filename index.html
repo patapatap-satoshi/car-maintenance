@@ -84,11 +84,11 @@
             <span class="measure-label">ブレーキパッド</span>
             <label>F パッド<input type="number" name="padF" inputmode="decimal" min="0" max="30" step="0.1" placeholder="mm" /></label>
             <label>R パッド<input type="number" name="padR" inputmode="decimal" min="0" max="30" step="0.1" placeholder="mm" /></label>
-            <span class="measure-label">タイヤ残り溝</span>
+            <span class="measure-label">タイヤ残り溝<br /><small id="tread-set-label" class="muted"></small></span>
             <label>F タイヤ<input type="number" name="treadF" inputmode="decimal" min="0" max="30" step="0.1" placeholder="mm" /></label>
             <label>R タイヤ<input type="number" name="treadR" inputmode="decimal" min="0" max="30" step="0.1" placeholder="mm" /></label>
           </div>
-          <p class="muted small">目安：パッドは 5mm 以下でそろそろ・3mm 以下で交換、タイヤ溝は 4mm 以下でそろそろ・1.6mm（スリップサイン）以下は使用不可。</p>
+          <p class="muted small">目安：パッドは 5mm 以下でそろそろ・3mm 以下で交換。夏タイヤの溝は 4mm 以下でそろそろ・1.6mm（スリップサイン）以下は使用不可。冬タイヤは 5.5mm 以下でそろそろ・4mm 以下（プラットフォーム付近）で冬用として交換。残り溝は、その時点で装着しているタイヤとして記録します。</p>
         </details>
 
         <fieldset>
@@ -101,6 +101,20 @@
             <label>
               工賃 (円)
               <input type="number" name="laborCost" inputmode="numeric" min="0" step="1" placeholder="例: 1600" />
+            </label>
+          </div>
+          <div id="tire-fees" class="grid-2" hidden>
+            <label>
+              タイヤ脱着料 (円)
+              <input type="number" name="mountFee" inputmode="numeric" min="0" step="1" placeholder="例: 4400" />
+            </label>
+            <label>
+              エアーバルブ交換料 (円)
+              <input type="number" name="valveFee" inputmode="numeric" min="0" step="1" placeholder="例: 1320" />
+            </label>
+            <label>
+              タイヤ処分料 (円)
+              <input type="number" name="disposalFee" inputmode="numeric" min="0" step="1" placeholder="例: 1100" />
             </label>
           </div>
           <div class="cost-total">
