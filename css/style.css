@@ -209,6 +209,20 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
 }
 .preview[hidden] { display: none; }
 
+.cost-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin: -4px 0 12px;
+  font-size: 13.5px;
+}
+.cost-total b { font-size: 17px; }
+#legacy-cost-note { margin: -6px 0 12px; }
+
 .form-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .form-actions .btn { min-width: 120px; }
 
@@ -219,8 +233,9 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
 .history-head .right b { font-size: 17px; }
 .history-item .part { font-size: 13.5px; margin-top: 4px; }
 .tag { display: inline-block; font-size: 11px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; margin-right: 4px; color: var(--muted); }
-.meta { display: flex; gap: 12px; color: var(--muted); margin-top: 4px; }
+.meta { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--muted); margin-top: 4px; }
 .meta:empty { display: none; }
+.meta .cost b { color: var(--text); }
 .memo { margin: 6px 0 0; font-size: 13px; white-space: pre-wrap; }
 
 /* ---------- settings ---------- */

@@ -56,3 +56,14 @@ test('computeStatus: 期間のみの項目（バッテリー）', () => {
   assert.equal(st.elapsedText, '1年');
   assert.equal(st.state, 'ok');
 });
+
+test('totalCost: 部品代 + 工賃', () => {
+  assert.equal(C.totalCost({ partsCost: 4200, laborCost: 1600 }), 5800);
+  assert.equal(C.totalCost({ partsCost: 4200, laborCost: null }), 4200);
+  assert.equal(C.totalCost({ partsCost: null, laborCost: 1100 }), 1100);
+  assert.equal(C.totalCost({ partsCost: 0, laborCost: 0 }), 0);
+  assert.equal(C.totalCost({ partsCost: null, laborCost: null }), null);
+  // 内訳のない古い記録は以前の費用をそのまま使う
+  assert.equal(C.totalCost({ cost: 5000 }), 5000);
+  assert.equal(C.totalCost({ cost: null }), null);
+});

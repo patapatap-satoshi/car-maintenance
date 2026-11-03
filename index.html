@@ -81,15 +81,24 @@
           <legend>その他</legend>
           <div class="grid-2">
             <label>
-              費用 (円)
-              <input type="number" name="cost" inputmode="numeric" min="0" step="1" placeholder="例: 5800" />
+              部品代 (円)
+              <input type="number" name="partsCost" inputmode="numeric" min="0" step="1" placeholder="例: 4200" />
             </label>
             <label>
-              作業した店舗
-              <input type="text" name="shop" list="shop-list" placeholder="例: 自分 / ○○オートバックス" />
-              <datalist id="shop-list"></datalist>
+              工賃 (円)
+              <input type="number" name="laborCost" inputmode="numeric" min="0" step="1" placeholder="例: 1600" />
             </label>
           </div>
+          <div class="cost-total">
+            <span class="muted">費用合計</span>
+            <b id="cost-total">—</b>
+          </div>
+          <p id="legacy-cost-note" class="muted small" hidden></p>
+          <label>
+            作業した店舗
+            <input type="text" name="shop" list="shop-list" placeholder="例: 自分 / ○○オートバックス" />
+            <datalist id="shop-list"></datalist>
+          </label>
           <label>
             メモ
             <textarea name="memo" rows="2" placeholder="例: 前後ローテーションも実施"></textarea>

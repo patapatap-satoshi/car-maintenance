@@ -170,7 +170,21 @@
     return res;
   }
 
+  /**
+   * 記録の費用合計（部品代 + 工賃）。
+   * 内訳がない古い記録は、以前の「費用」(cost) をそのまま合計として扱う。
+   * 何も入力されていなければ null。
+   */
+  function totalCost(rec) {
+    if (!rec) return null;
+    const parts = Number.isFinite(rec.partsCost) ? rec.partsCost : null;
+    const labor = Number.isFinite(rec.laborCost) ? rec.laborCost : null;
+    if (parts !== null || labor !== null) return (parts || 0) + (labor || 0);
+    return Number.isFinite(rec.cost) ? rec.cost : null;
+  }
+
   return {
+    totalCost,
     parseDate,
     formatDate,
     todayStr,
