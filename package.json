@@ -1,0 +1,10 @@
+{
+  "name": "car-maintenance",
+  "version": "1.0.0",
+  "private": true,
+  "description": "車の消耗品交換履歴と交換推奨時期を管理する Web アプリ",
+  "scripts": {
+    "test": "node --test",
+    "start": "npx --yes serve ."
+  }
+}
